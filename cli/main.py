@@ -5,15 +5,25 @@ Unified LankaMind CLI entry point.
 
 Commands
 --------
+lankamind start      — start a new network (coordinator + first worker)
+lankamind join       — join an existing network (auto-discovers via mDNS)
+lankamind serve      — start everything: gateway + workers + API + mobile web UI
 lankamind chat       — interactive text completion (REPL)
 lankamind complete   — single-shot completion (same as cli/client.py)
-lankamind node       — start a worker node
+lankamind node       — start a worker node (manual config)
 lankamind gateway    — start the gateway
 lankamind bootstrap  — start the peer-discovery bootstrap node
 lankamind api        — start the REST API server
 lankamind status     — show gateway + worker status
 lankamind balance    — show reward ledger balance for a worker
 lankamind keys       — print this node's public key
+
+Quick start (multi-device):
+    # On main PC:
+    lankamind start --model distilgpt2 --shards 3
+
+    # On every other device (same Wi-Fi):
+    lankamind join
 
 Install:
     pip install -e .
@@ -44,6 +54,164 @@ def _add_project_root() -> None:
 def cli() -> None:
     """LankaMind — distributed LLM inference for Sri Lanka."""
     _add_project_root()
+
+
+# ── start ─────────────────────────────────────────────────────────────────────
+
+@cli.command("start")
+@click.option("--model",   default="distilgpt2", show_default=True,
+              help="Model to load on every worker (e.g. distilgpt2, gpt2)")
+@click.option("--shards",  default=3, show_default=True,
+              help="Number of worker shards the network expects")
+@click.option("--port",    default=5800, show_default=True,
+              help="Coordinator REST API port")
+@click.option("--no-mdns", is_flag=True, default=False,
+              help="Disable mDNS auto-announce (use --coordinator URL on other devices)")
+@click.option("--first-worker/--no-first-worker", default=True,
+              help="Also start a worker on this machine (uses 1 shard slot)")
+def start(model, shards, port, no_mdns, first_worker) -> None:
+    """Start a new LankaMind network on this machine.
+
+    \b
+    This machine becomes the coordinator and (optionally) also runs the
+    first worker.  Other devices join automatically with:
+
+        lankamind join
+
+    \b
+    Example — 3-device network:
+        PC        : lankamind start --model distilgpt2 --shards 3
+        Laptop    : lankamind join
+        Phone/RPi : lankamind join
+    """
+    import os, subprocess, threading, time
+    from network.coordinator import run_coordinator, _local_ip, DEFAULT_COORD_PORT
+
+    local_ip = _local_ip()
+    root     = pathlib.Path(__file__).resolve().parent.parent
+    env      = os.environ.copy()
+    env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONIOENCODING"] = "utf-8"
+
+    click.echo(f"\n{'='*60}")
+    click.echo(f"  LankaMind — Network Start")
+    click.echo(f"{'='*60}")
+    click.echo(f"  Model      : {model}")
+    click.echo(f"  Shards     : {shards}")
+    click.echo(f"  Coord port : {port}")
+    click.echo(f"  LAN IP     : {local_ip}")
+    click.echo(f"{'='*60}")
+    click.echo(f"\n  Other devices — run this command:")
+    click.echo(f"    lankamind join")
+    click.echo(f"  (or) lankamind join --coordinator http://{local_ip}:{port}")
+    click.echo()
+
+    # Start coordinator in background
+    coord = run_coordinator(
+        num_shards=shards,
+        model=model,
+        port=port,
+        announce_mdns=not no_mdns,
+        result_host=local_ip,
+    )
+    click.echo(f"  ✓ Coordinator running at http://{local_ip}:{port}\n")
+
+    # Optionally start the first worker on this machine via auto_join
+    if first_worker:
+        click.echo(f"  Starting first worker on this machine (shard 0)...")
+
+        def _run_local_worker():
+            from core.auto_worker import auto_join
+            auto_join(
+                coordinator_url=f"http://localhost:{port}",
+                model=model,
+                host_ip=local_ip,
+            )
+
+        wt = threading.Thread(target=_run_local_worker, daemon=False, name="LocalWorker")
+        wt.start()
+
+        # Wait for network to be complete
+        click.echo(f"\n  Waiting for all {shards} shards to join and load...\n")
+        try:
+            while True:
+                topo = coord.topology()
+                reg  = topo["registered"]
+                rdy  = sum(1 for w in topo["workers"] if w["ready"])
+                click.echo(
+                    f"  {reg}/{shards} joined  {rdy}/{shards} ready ...",
+                    nl=False,
+                )
+                click.echo("\r", nl=False)
+                if topo["complete"]:
+                    break
+                time.sleep(3)
+
+            click.echo(f"\n  ✓ Network complete — {shards}/{shards} shards ready!")
+            click.echo(f"\n  Send a request:")
+            click.echo(f"    lankamind complete \"The history of Sri Lanka\"")
+            click.echo()
+
+            wt.join()   # keep running until Ctrl-C
+
+        except KeyboardInterrupt:
+            click.echo("\n\n  Shutting down.")
+    else:
+        click.echo(f"  Coordinator running. Waiting for {shards} workers to join...\n")
+        try:
+            while True:
+                topo = coord.topology()
+                click.echo(
+                    f"  {topo['registered']}/{shards} joined  "
+                    f"{sum(1 for w in topo['workers'] if w['ready'])}/{shards} ready ...\r",
+                    nl=False,
+                )
+                if topo["complete"]:
+                    click.echo(f"\n  ✓ All {shards} shards ready!")
+                time.sleep(3)
+        except KeyboardInterrupt:
+            click.echo("\n  Shutting down.")
+
+
+# ── join ──────────────────────────────────────────────────────────────────────
+
+@cli.command("join")
+@click.option("--coordinator", "coordinator_url", default=None,
+              help="Coordinator URL (auto-discovered via mDNS if omitted)")
+@click.option("--model", default=None,
+              help="Override model name (coordinator sets it by default)")
+@click.option("--host",  default=None,
+              help="This device's LAN IP (auto-detected if omitted)")
+@click.option("--gateway", default=None,
+              help="Optional gateway heartbeat address")
+def join(coordinator_url, model, host, gateway) -> None:
+    """Join an existing LankaMind network as a worker.
+
+    \b
+    Automatically:
+      • Discovers the coordinator via mDNS (no IP needed)
+      • Gets assigned a shard index
+      • Downloads the required model slice
+      • Wires into the inference pipeline
+      • Runs forever (Ctrl-C to leave)
+
+    \b
+    Examples:
+        lankamind join                                   # auto-discover
+        lankamind join --coordinator http://192.168.1.5:5800
+        lankamind join --model distilgpt2                # override model
+    """
+    from core.auto_worker import auto_join
+    try:
+        auto_join(
+            coordinator_url=coordinator_url,
+            model=model,
+            host_ip=host,
+            gateway_address=gateway,
+        )
+    except RuntimeError as exc:
+        click.echo(f"\n  Error: {exc}", err=True)
+        raise SystemExit(1)
 
 
 # ── complete ──────────────────────────────────────────────────────────────────
