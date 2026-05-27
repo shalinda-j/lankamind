@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lankamind"
+version = "0.1.0-alpha"
+description = "Decentralized LLM inference network — Phase 1 prototype"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0.0",
+    "transformers>=4.35.0",
+    "accelerate>=0.24.0",
+    "pyzmq>=25.0.0",
+    "tokenizers>=0.14.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4.0", "pytest-timeout>=2.1.0"]
+quantization = ["bitsandbytes>=0.41.0"]   # Phase 2
+
+[project.scripts]
+# After `pip install -e .` these become shell commands:
+lankamind-worker = "core.worker:main"
+lankamind-client = "cli.client:main"
+
+[tool.setuptools.packages.find]
+# Include every top-level package folder in the repo root
+where = ["."]
+include = ["core*", "transport*", "orchestrator*", "network*",
+           "trust*", "api*", "cli*", "scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: full end-to-end tests that spawn subprocesses",
+    "slow: downloads model weights (~500 MB on first run)",
+]

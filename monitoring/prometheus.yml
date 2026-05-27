@@ -1,0 +1,24 @@
+# monitoring/prometheus.yml
+# --------------------------
+# Prometheus scrape configuration for LankaMind.
+# (Phase 2 — uncomment and expand when metrics endpoints are live.)
+#
+# Phase 2 metrics to expose from each worker:
+#   lankamind_requests_total          counter  — requests processed
+#   lankamind_latency_seconds         histogram — time per forward pass
+#   lankamind_queue_depth             gauge    — ZMQ queue length
+#   lankamind_ram_used_bytes          gauge    — worker RAM usage
+#
+# Usage:
+#   docker run -p 9090:9090 -v $PWD/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml prom/prometheus
+
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: lankamind_workers
+    static_configs:
+      - targets:
+          - localhost:8000   # worker 0 metrics endpoint (Phase 2)
+          - localhost:8001   # worker 1
+          - localhost:8002   # worker 2

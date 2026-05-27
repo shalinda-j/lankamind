@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Model weights cache (downloaded by HuggingFace)
+# Remove this line if you want to commit cached weights (not recommended)
+~/.cache/huggingface/
+
+# Runtime artefacts
+.worker_pids
+logs/*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Phase 4+ blockchain artefacts
+*.sol.artifacts/
+deployments/
+
+# Monitoring data
+monitoring/grafana/data/
