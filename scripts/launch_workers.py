@@ -55,8 +55,13 @@ def main() -> None:
         description="Launch LankaMind worker processes.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--shards", type=int, default=3, help="Number of worker shards")
-    parser.add_argument("--model",  type=str, default="gpt2", help="HuggingFace model name")
+    parser.add_argument("--shards",   type=int, default=3,    help="Number of worker shards")
+    parser.add_argument("--model",    type=str, default="gpt2", help="HuggingFace model name")
+    parser.add_argument("--gateway",  type=str, default=None,
+                        help="Gateway heartbeat address (e.g. tcp://localhost:5700). "
+                             "If set, workers register themselves dynamically.")
+    parser.add_argument("--host",     type=str, default="localhost",
+                        help="Public host/IP to advertise to the gateway")
     args = parser.parse_args()
 
     num_shards: int = args.shards
@@ -94,6 +99,8 @@ def main() -> None:
             "--input-port",     str(input_port),
             "--output-address", output_address,
         ]
+        if args.gateway:
+            cmd += ["--gateway-address", args.gateway, "--host", args.host]
 
         log_path = LOGS_DIR / f"worker_{i}.log"
         log_file = open(log_path, "w", encoding="utf-8")

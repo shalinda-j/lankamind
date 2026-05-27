@@ -3,47 +3,40 @@ core/worker.py
 --------------
 Worker process: loads one ModelShard and loops forever, processing requests.
 
-Each worker is a standalone Python process.  The launch script
-(scripts/launch_workers.py) spawns N of them with different --shard-idx
-values.  Together they form the inference pipeline.
+PHASE 1 behaviour (unchanged):
+  Load shard → bind PULL socket → process activations → PUSH to next hop.
 
-HOW A REQUEST FLOWS THROUGH A WORKER
-======================================
-  1.  Receive a two-frame ZMQ message from the upstream worker (or client):
-        Frame 0: JSON header  { request_id, generation_step }
-        Frame 1: serialised tensor  (input_ids for shard 0; hidden_states otherwise)
+PHASE 2 additions (optional — only active if --gateway-address is given):
+  • Heartbeat thread: PUSHes a JSON status message to the gateway every 5 s
+    so the gateway knows this worker is alive and what shard it serves.
+  • Ping responder: binds a REP socket on (input_port + 100) and replies
+    "pong" to every "ping" — used by the gateway's HealthChecker.
 
-  2.  Deserialise the tensor and run the forward pass through our model slice.
+All Phase 2 flags are OPTIONAL.  Omitting --gateway-address runs Phase 1 mode.
 
-  3a. If we are NOT the last shard: send [header, new_hidden_states] to the
-      next worker's PULL socket.
+Run:
+    python -m core.worker --shard-idx 0 --num-shards 3 --model gpt2 \
+           --input-port 5500 --output-address tcp://localhost:5501
 
-  3b. If we ARE the last shard: we have logits.  Take the argmax of the
-      last token position to get the next predicted token ID.  Send
-      [header+{"next_token_id": N}, b""] back to the client.
-
-READY SIGNALLING
-=================
-Loading a 500 MB model takes a few seconds.  When ready, each worker writes
-an empty "sentinel" file to the system temp directory so the launch script
-and integration tests know all shards are up.
-
-Run this file directly:
-    python -m core.worker --shard-idx 0 --num-shards 3 \\
-           --model gpt2 --input-port 5500 \\
-           --output-address tcp://localhost:5501
+With gateway:
+    python -m core.worker --shard-idx 0 --num-shards 3 --model gpt2 \
+           --input-port 5500 --output-address tcp://localhost:5501 \
+           --gateway-address tcp://localhost:5700 --host 192.168.1.10
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import pathlib
 import signal
 import sys
 import tempfile
+import threading
+import time
+import uuid
 
-import torch
 import zmq
 
 from core.model_shard import ModelShard
@@ -58,138 +51,243 @@ logging.basicConfig(
     format="[Worker %(shard_idx)s] %(message)s",
 )
 
+HEARTBEAT_INTERVAL_S = 5.0
+
+
+# ── Readiness sentinel ────────────────────────────────────────────────────────
+
 
 def _ready_file(shard_idx: int) -> pathlib.Path:
-    """Path to the sentinel file we touch when we finish loading."""
     return pathlib.Path(tempfile.gettempdir()) / f"lankamind_worker_{shard_idx}.ready"
 
 
 def _cleanup(shard_idx: int) -> None:
-    """Remove the ready sentinel on exit so stale files don't confuse restarts."""
     try:
         _ready_file(shard_idx).unlink(missing_ok=True)
     except Exception:
         pass
 
 
-# ── Main worker loop ──────────────────────────────────────────────────────────
+# ── Phase 2: heartbeat thread ─────────────────────────────────────────────────
+
+
+def _heartbeat_loop(
+    stop_event:      threading.Event,
+    gateway_address: str,
+    worker_id:       str,
+    shard_idx:       int,
+    num_shards:      int,
+    model_name:      str,
+    host:            str,
+    input_port:      int,
+    request_counter: list,   # [0] = mutable integer shared with main loop
+) -> None:
+    """
+    Continuously PUSH heartbeat messages to the gateway.
+    Runs in a daemon thread — exits when stop_event is set.
+    """
+    ctx = zmq.Context()
+    sock = ctx.socket(zmq.PUSH)
+    sock.setsockopt(zmq.LINGER, 0)
+    sock.connect(gateway_address)
+
+    while not stop_event.wait(HEARTBEAT_INTERVAL_S):
+        try:
+            sock.send_json({
+                "type":                "heartbeat",
+                "worker_id":           worker_id,
+                "shard_idx":           shard_idx,
+                "num_shards":          num_shards,
+                "model_name":          model_name,
+                "host":                host,
+                "port":                input_port,
+                "requests_processed":  request_counter[0],
+            })
+        except Exception:
+            pass   # don't crash the heartbeat thread
+
+    sock.close()
+    ctx.term()
+
+
+# ── Phase 2: ping responder thread ───────────────────────────────────────────
+
+
+def _ping_responder_loop(
+    stop_event: threading.Event,
+    ping_port:  int,
+) -> None:
+    """
+    Bind a REP socket on ping_port and reply "pong" to every "ping".
+    The gateway's HealthChecker measures round-trip time to this socket.
+    """
+    ctx = zmq.Context()
+    sock = ctx.socket(zmq.REP)
+    sock.RCVTIMEO = 500   # ms
+    sock.setsockopt(zmq.LINGER, 0)
+    try:
+        sock.bind(f"tcp://*:{ping_port}")
+    except zmq.ZMQError as exc:
+        # Non-fatal: if the ping port is already in use, just skip
+        logging.getLogger(__name__).warning(
+            "Could not bind ping port %d: %s", ping_port, exc,
+            extra={"shard_idx": "?"},
+        )
+        ctx.term()
+        return
+
+    while not stop_event.wait(0):
+        try:
+            msg = sock.recv_string()
+            if msg == "ping":
+                sock.send_string("pong")
+        except zmq.Again:
+            pass
+        except Exception:
+            pass
+
+    sock.close()
+    ctx.term()
+
+
+# ── Main worker logic ─────────────────────────────────────────────────────────
 
 
 def run_worker(
-    shard_idx: int,
-    num_shards: int,
-    model_name: str,
-    input_port: int,
-    output_address: str,
+    shard_idx:       int,
+    num_shards:      int,
+    model_name:      str,
+    input_port:      int,
+    output_address:  str,
+    gateway_address: str | None = None,
+    worker_id:       str | None = None,
+    host:            str        = "localhost",
 ) -> None:
     """
-    Load the model shard and start the request-processing loop.
-
-    This function never returns under normal operation — it loops until the
-    process is killed (SIGTERM / Ctrl-C).
+    Load the model shard and start the inference loop.
+    Never returns under normal operation.
     """
-    log = logging.getLogger(__name__)
+    log   = logging.getLogger(__name__)
     extra = {"shard_idx": shard_idx}
+    wid   = worker_id or uuid.uuid4().hex[:12]
 
     # ── 1. Load model shard ───────────────────────────────────────────────────
     log.info("Loading shard %d/%d from '%s' …", shard_idx, num_shards - 1, model_name, extra=extra)
     shard = ModelShard(model_name, shard_idx, num_shards)
-    shard.eval()
     log.info(
-        "Loaded — transformer blocks %s, is_first=%s, is_last=%s",
-        shard.layer_range,
-        shard.is_first,
-        shard.is_last,
+        "Loaded layers %s  is_first=%s  is_last=%s",
+        shard.layer_range, shard.is_first, shard.is_last,
         extra=extra,
     )
 
-    # ── 2. Set up ZMQ sockets ─────────────────────────────────────────────────
-    ctx = zmq.Context()
-
-    # Input: bind a PULL socket so upstream can PUSH to us
+    # ── 2. ZMQ inference sockets ─────────────────────────────────────────────
+    ctx     = zmq.Context()
     in_sock = WorkerInputSocket(ctx, input_port)
-    log.info("Listening on port %d", input_port, extra=extra)
-
-    # Output: connect a PUSH socket to the next hop
     out_sock = WorkerOutputSocket(ctx, output_address)
-    log.info("Forwarding to %s", output_address, extra=extra)
+    log.info("Inference: port %d → %s", input_port, output_address, extra=extra)
 
-    # ── 3. Signal readiness ───────────────────────────────────────────────────
+    # ── 3. Phase 2 background threads ────────────────────────────────────────
+    stop_event      = threading.Event()
+    request_counter = [0]   # mutable counter shared with inference loop
+
+    if gateway_address:
+        ping_port = input_port + 100
+        hb_thread = threading.Thread(
+            target=_heartbeat_loop,
+            kwargs=dict(
+                stop_event=stop_event,
+                gateway_address=gateway_address,
+                worker_id=wid,
+                shard_idx=shard_idx,
+                num_shards=num_shards,
+                model_name=model_name,
+                host=host,
+                input_port=input_port,
+                request_counter=request_counter,
+            ),
+            daemon=True,
+            name=f"HB-shard{shard_idx}",
+        )
+        ping_thread = threading.Thread(
+            target=_ping_responder_loop,
+            kwargs=dict(stop_event=stop_event, ping_port=ping_port),
+            daemon=True,
+            name=f"Ping-shard{shard_idx}",
+        )
+        hb_thread.start()
+        ping_thread.start()
+        log.info(
+            "Heartbeat → %s  |  Ping responder on port %d",
+            gateway_address, ping_port,
+            extra=extra,
+        )
+
+    # ── 4. Signal readiness ───────────────────────────────────────────────────
     _ready_file(shard_idx).touch()
-    log.info("READY — waiting for requests …", extra=extra)
+    log.info("READY  worker_id=%s", wid, extra=extra)
 
-    # ── 4. Graceful shutdown on SIGTERM ───────────────────────────────────────
-    def _handle_sigterm(*_):
-        log.info("Received SIGTERM — shutting down.", extra=extra)
+    # ── 5. Graceful shutdown ──────────────────────────────────────────────────
+    def _shutdown(*_: object) -> None:
+        log.info("Shutting down.", extra=extra)
+        stop_event.set()
         _cleanup(shard_idx)
         in_sock.close()
         out_sock.close()
         ctx.term()
         sys.exit(0)
 
-    signal.signal(signal.SIGTERM, _handle_sigterm)
+    signal.signal(signal.SIGTERM, _shutdown)
 
-    # ── 5. Main loop ──────────────────────────────────────────────────────────
+    # ── 6. Inference loop ─────────────────────────────────────────────────────
     try:
         while True:
             header, tensor_bytes = in_sock.recv()
 
-            req_id = header.get("request_id", "?")
-            step = header.get("generation_step", 0)
-
-            # Deserialise and run forward pass
             if shard.is_first:
-                input_ids = deserialize_tensor(tensor_bytes)
-                log.debug(
-                    "req=%s step=%d  input_ids shape=%s",
-                    req_id, step, tuple(input_ids.shape),
-                    extra=extra,
-                )
-                output = shard(input_ids=input_ids)
+                output = shard(input_ids=deserialize_tensor(tensor_bytes))
             else:
-                hidden_states = deserialize_tensor(tensor_bytes)
-                log.debug(
-                    "req=%s step=%d  hidden_states shape=%s",
-                    req_id, step, tuple(hidden_states.shape),
-                    extra=extra,
-                )
-                output = shard(hidden_states=hidden_states)
+                output = shard(hidden_states=deserialize_tensor(tensor_bytes))
 
-            # Forward result downstream
+            request_counter[0] += 1
+
             if shard.is_last:
-                # output is logits [batch, seq_len, vocab_size]
-                # Greedy: take the token with the highest score at the last position
                 next_token_id = int(output[0, -1, :].argmax().item())
                 header["next_token_id"] = next_token_id
-                log.debug("req=%s step=%d  next_token=%d", req_id, step, next_token_id, extra=extra)
-                out_sock.send(header, tensor=None)  # empty tensor frame — result is in header
+                out_sock.send(header, tensor=None)
             else:
                 out_sock.send(header, tensor=output)
 
     except KeyboardInterrupt:
-        log.info("Keyboard interrupt — shutting down.", extra=extra)
+        log.info("Keyboard interrupt.", extra=extra)
     finally:
+        stop_event.set()
         _cleanup(shard_idx)
         in_sock.close()
         out_sock.close()
         ctx.term()
 
 
-# ── CLI entry point ───────────────────────────────────────────────────────────
+# ── CLI ───────────────────────────────────────────────────────────────────────
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="LankaMind worker — holds one shard of the model pipeline.",
+    p = argparse.ArgumentParser(
+        description="LankaMind worker — holds one model shard",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--shard-idx",      type=int, required=True,  help="Index of this shard (0-based)")
-    parser.add_argument("--num-shards",     type=int, required=True,  help="Total number of shards in the pipeline")
-    parser.add_argument("--model",          type=str, default="gpt2", help="HuggingFace model name or local path")
-    parser.add_argument("--input-port",     type=int, required=True,  help="TCP port this worker listens on")
-    parser.add_argument("--output-address", type=str, required=True,  help="Address of the next hop (tcp://host:port)")
-
-    args = parser.parse_args()
+    p.add_argument("--shard-idx",       type=int, required=True)
+    p.add_argument("--num-shards",      type=int, required=True)
+    p.add_argument("--model",           type=str, default="gpt2")
+    p.add_argument("--input-port",      type=int, required=True)
+    p.add_argument("--output-address",  type=str, required=True)
+    # Phase 2 flags (optional)
+    p.add_argument("--gateway-address", type=str, default=None,
+                   help="Gateway heartbeat address (e.g. tcp://localhost:5700)")
+    p.add_argument("--worker-id",       type=str, default=None,
+                   help="Stable worker ID (auto-generated UUID if omitted)")
+    p.add_argument("--host",            type=str, default="localhost",
+                   help="Public host/IP reported to the gateway")
+    args = p.parse_args()
 
     run_worker(
         shard_idx=args.shard_idx,
@@ -197,6 +295,9 @@ def main() -> None:
         model_name=args.model,
         input_port=args.input_port,
         output_address=args.output_address,
+        gateway_address=args.gateway_address,
+        worker_id=args.worker_id,
+        host=args.host,
     )
 
 

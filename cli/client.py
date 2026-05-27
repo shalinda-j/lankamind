@@ -44,6 +44,35 @@ from transformers import GPT2Tokenizer
 from transport.zmq_transport import WorkerOutputSocket, deserialize_tensor, serialize_tensor
 
 
+def _discover_chain(
+    gateway_address: str,
+    model: str,
+    num_shards: int,
+) -> list[dict] | None:
+    """
+    Ask the gateway for a worker chain.
+    Returns list of worker dicts (ordered by shard_idx) or None on failure.
+    """
+    ctx = zmq.Context()
+    sock: zmq.Socket = ctx.socket(zmq.REQ)
+    sock.setsockopt(zmq.RCVTIMEO, 5_000)
+    sock.setsockopt(zmq.LINGER, 0)
+    sock.connect(gateway_address)
+    try:
+        sock.send_json({"type": "get_chain", "model_name": model, "num_shards": num_shards})
+        resp = sock.recv_json()
+        if resp.get("status") == "ok":
+            return resp["chain"]
+        print(f"[Gateway] {resp.get('message', 'error')}", file=sys.stderr)
+        return None
+    except zmq.Again:
+        print("[Gateway] Timeout — falling back to direct ports.", file=sys.stderr)
+        return None
+    finally:
+        sock.close()
+        ctx.term()
+
+
 def run_client(
     prompt: str,
     max_new_tokens: int = 60,
@@ -51,30 +80,44 @@ def run_client(
     workers: int = 3,
     base_port: int = 5500,
     result_port: int = 5599,
+    gateway_address: str | None = None,
 ) -> str:
     """
     Send *prompt* through the pipeline and return the generated continuation.
 
     Parameters
     ----------
-    prompt         : The text the model will continue.
-    max_new_tokens : Maximum number of tokens to generate.
-    model          : HuggingFace tokeniser to use (must match the workers' model).
-    workers        : Number of workers in the pipeline (informational only).
-    base_port      : Port that Worker 0 listens on.
-    result_port    : Port this client will bind to receive results.
+    prompt           : The text the model will continue.
+    max_new_tokens   : Maximum number of tokens to generate.
+    model            : HuggingFace tokeniser to use (must match the workers).
+    workers          : Number of workers (used when gateway is not available).
+    base_port        : Port that Worker 0 listens on (used without gateway).
+    result_port      : Port this client will bind to receive results.
+    gateway_address  : If set, discover the chain from the gateway (Phase 2).
 
     Returns
     -------
     str — the generated text (without the original prompt).
     """
 
+    # ── Phase 2: discover chain from gateway (optional) ───────────────────────
+    first_worker_port = base_port
+    if gateway_address:
+        chain = _discover_chain(gateway_address, model, workers)
+        if chain:
+            first_worker_port = chain[0]["port"]
+            print(
+                f"[Gateway] Chain: "
+                + " → ".join(f"{w['host']}:{w['port']}" for w in chain),
+                file=sys.stderr,
+            )
+
     # ── Set up ZMQ ────────────────────────────────────────────────────────────
     ctx = zmq.Context()
 
     # PUSH → Worker 0 (worker binds, we connect)
     send_sock: zmq.Socket = ctx.socket(zmq.PUSH)
-    send_sock.connect(f"tcp://localhost:{base_port}")
+    send_sock.connect(f"tcp://localhost:{first_worker_port}")
 
     # PULL ← last worker (we bind, worker connects)
     recv_sock: zmq.Socket = ctx.socket(zmq.PULL)
@@ -164,6 +207,12 @@ def main() -> None:
     parser.add_argument("--workers",     type=int, default=3,     help="Number of workers in the pipeline")
     parser.add_argument("--base-port",   type=int, default=5500,  help="Port of Worker 0")
     parser.add_argument("--result-port", type=int, default=5599,  help="Local port to receive results on")
+    parser.add_argument(
+        "--gateway",
+        type=str,
+        default=None,
+        help="Gateway client address for chain discovery (e.g. tcp://localhost:5701)",
+    )
 
     args = parser.parse_args()
 
@@ -174,6 +223,7 @@ def main() -> None:
         workers=args.workers,
         base_port=args.base_port,
         result_port=args.result_port,
+        gateway_address=args.gateway,
     )
 
 
