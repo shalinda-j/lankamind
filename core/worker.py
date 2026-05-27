@@ -57,10 +57,20 @@ from transport.zmq_transport import (
     deserialize_tensor,
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="[Worker %(shard_idx)s] %(message)s",
-)
+class _SafeWorkerFormatter(logging.Formatter):
+    """
+    Formatter that falls back gracefully when 'shard_idx' is missing.
+    Third-party libraries (transformers, torch) log without our extra fields.
+    """
+    def format(self, record: logging.LogRecord) -> str:
+        if not hasattr(record, "shard_idx"):
+            record.shard_idx = "-"
+        return super().format(record)
+
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(_SafeWorkerFormatter("[Worker %(shard_idx)s] %(message)s"))
+logging.basicConfig(handlers=[_handler], level=logging.INFO)
 
 HEARTBEAT_INTERVAL_S = 5.0
 DEFAULT_KEY_FILE = pathlib.Path.home() / ".lankamind" / "node.key"
