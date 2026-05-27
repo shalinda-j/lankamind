@@ -5,7 +5,7 @@
 Run large language models split across multiple machines, no central server required.  
 Free, open-source, and built for the community.
 
-[![CI](https://github.com/sachinthyamakulasooriya/lankamind/actions/workflows/ci.yml/badge.svg)](https://github.com/sachinthyamakulasooriya/lankamind/actions/workflows/ci.yml)
+[![CI](https://github.com/shalinda-j/lankamind/actions/workflows/ci.yml/badge.svg)](https://github.com/shalinda-j/lankamind/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 
@@ -34,7 +34,7 @@ You → Gateway → Worker 0 → Worker 1 → Worker 2 → You
 ## Quick Install
 
 ```bash
-git clone https://github.com/sachinthyamakulasooriya/lankamind.git
+git clone https://github.com/shalinda-j/lankamind.git
 cd lankamind
 pip install -e .
 ```
@@ -133,4 +133,4 @@ PRs welcome! Please run the test suite before submitting.
 python -m pytest tests/unit/ -v
 ```
 
-Join the discussion: [GitHub Issues](https://github.com/sachinthyamakulasooriya/lankamind/issues)
+Join the discussion: [GitHub Issues](https://github.com/shalinda-j/lankamind/issues)

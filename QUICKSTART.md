@@ -15,7 +15,7 @@ Get up and running in **5 minutes** on a single machine.
 ## 1. Install
 
 ```bash
-git clone https://github.com/sachinthyamakulasooriya/lankamind.git
+git clone https://github.com/shalinda-j/lankamind.git
 cd lankamind
 pip install -e .
 ```

@@ -51,9 +51,9 @@ lankamind-worker = "core.worker:main"
 lankamind-client = "cli.client:main"
 
 [project.urls]
-Homepage = "https://github.com/sachinthyamakulasooriya/lankamind"
-Repository = "https://github.com/sachinthyamakulasooriya/lankamind"
-"Bug Tracker" = "https://github.com/sachinthyamakulasooriya/lankamind/issues"
+Homepage = "https://github.com/shalinda-j/lankamind"
+Repository = "https://github.com/shalinda-j/lankamind"
+"Bug Tracker" = "https://github.com/shalinda-j/lankamind/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
