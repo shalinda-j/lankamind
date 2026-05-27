@@ -1,0 +1,126 @@
+# docker-compose.yml
+# -------------------
+# Spin up the full LankaMind stack:
+#   1 gateway + 3 workers + 1 API server + 1 bootstrap node
+#
+# Quick start:
+#   docker-compose up --build
+#
+# Then in another terminal:
+#   curl -s http://localhost:8000/health
+#   curl -s -X POST http://localhost:8000/v1/complete \
+#        -H "Content-Type: application/json" \
+#        -d '{"prompt": "Sri Lanka is a beautiful island that"}'
+
+version: "3.9"
+
+services:
+
+  # ── Gateway ────────────────────────────────────────────────────────────────
+  gateway:
+    build: .
+    command: ["gateway"]
+    ports:
+      - "5700:5700"   # heartbeat from workers
+      - "5701:5701"   # client chain-discovery
+      - "9090:9090"   # Prometheus metrics
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import zmq; ctx=zmq.Context(); s=ctx.socket(zmq.REQ); s.setsockopt(zmq.RCVTIMEO,2000); s.connect('tcp://localhost:5701'); s.send_json({'type':'status'}); s.recv_json(); s.close(); ctx.term()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Bootstrap node (peer discovery) ───────────────────────────────────────
+  bootstrap:
+    build: .
+    command: ["bootstrap", "--port", "6000"]
+    ports:
+      - "6000:6000"
+    restart: unless-stopped
+
+  # ── Worker 0 (shard 0/2) ──────────────────────────────────────────────────
+  worker0:
+    build: .
+    command: ["-m", "core.worker",
+              "--shard-idx", "0", "--num-shards", "3",
+              "--model", "gpt2",
+              "--input-port", "5500",
+              "--output-address", "tcp://worker1:5501",
+              "--gateway-address", "tcp://gateway:5700",
+              "--host", "worker0"]
+    entrypoint: ["python"]
+    ports:
+      - "5500:5500"
+      - "5600:5600"   # ping
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Worker 1 (shard 1/2) ──────────────────────────────────────────────────
+  worker1:
+    build: .
+    command: ["-m", "core.worker",
+              "--shard-idx", "1", "--num-shards", "3",
+              "--model", "gpt2",
+              "--input-port", "5501",
+              "--output-address", "tcp://worker2:5502",
+              "--gateway-address", "tcp://gateway:5700",
+              "--host", "worker1"]
+    entrypoint: ["python"]
+    ports:
+      - "5501:5501"
+      - "5601:5601"
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Worker 2 (shard 2/2 — last, sends result to API) ─────────────────────
+  worker2:
+    build: .
+    command: ["-m", "core.worker",
+              "--shard-idx", "2", "--num-shards", "3",
+              "--model", "gpt2",
+              "--input-port", "5502",
+              "--output-address", "tcp://api:5599",
+              "--gateway-address", "tcp://gateway:5700",
+              "--host", "worker2"]
+    entrypoint: ["python"]
+    ports:
+      - "5502:5502"
+      - "5602:5602"
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── REST API ───────────────────────────────────────────────────────────────
+  api:
+    build: .
+    command: ["api", "--host", "0.0.0.0", "--port", "8000",
+              "--gateway", "tcp://gateway:5701"]
+    entrypoint: ["python", "-m", "cli.main"]
+    ports:
+      - "8000:8000"
+      - "5599:5599"   # result port (last worker → API)
+    environment:
+      - LANKAMIND_GATEWAY=tcp://gateway:5701
+      - LANKAMIND_BASE_PORT=5500
+      - LANKAMIND_RESULT_PORT=5599
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  hf_cache:
+    driver: local

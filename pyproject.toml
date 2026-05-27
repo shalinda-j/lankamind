@@ -4,28 +4,58 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lankamind"
-version = "0.1.0-alpha"
-description = "Decentralized LLM inference network — Phase 1 prototype"
+version = "0.5.0"
+description = "Decentralized LLM inference network for Sri Lanka"
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.10"
+keywords = ["llm", "distributed", "inference", "sri-lanka", "p2p"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "torch>=2.0.0",
     "transformers>=4.35.0",
     "accelerate>=0.24.0",
     "pyzmq>=25.0.0",
     "tokenizers>=0.14.0",
+    "click>=8.1.0",
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
+    "httpx>=0.24.0",
+    "pydantic>=2.0.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4.0", "pytest-timeout>=2.1.0"]
-quantization = ["bitsandbytes>=0.41.0"]   # Phase 2
+dev = [
+    "pytest>=7.4.0",
+    "pytest-timeout>=2.1.0",
+    "pytest-anyio>=0.0.0",
+    "httpx>=0.24.0",
+]
+metrics = ["prometheus-client>=0.17.0"]
+quantization = ["bitsandbytes>=0.41.0"]
 
 [project.scripts]
-# After `pip install -e .` these become shell commands:
+# Unified entry point (Phase 5):
+lankamind = "cli.main:main"
+# Legacy aliases:
 lankamind-worker = "core.worker:main"
 lankamind-client = "cli.client:main"
 
+[project.urls]
+Homepage = "https://github.com/sachinthyamakulasooriya/lankamind"
+Repository = "https://github.com/sachinthyamakulasooriya/lankamind"
+"Bug Tracker" = "https://github.com/sachinthyamakulasooriya/lankamind/issues"
+
 [tool.setuptools.packages.find]
-# Include every top-level package folder in the repo root
 where = ["."]
 include = ["core*", "transport*", "orchestrator*", "network*",
            "trust*", "api*", "cli*", "scripts*"]

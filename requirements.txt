@@ -1,18 +1,29 @@
 # ── Core inference ────────────────────────────────────────────────────────────
 torch>=2.0.0
 transformers>=4.35.0
-accelerate>=0.24.0      # lets transformers pick CPU/GPU device cleanly
+accelerate>=0.24.0          # lets transformers pick CPU/GPU device cleanly
 
 # ── Networking / IPC ──────────────────────────────────────────────────────────
-pyzmq>=25.0.0           # ZeroMQ bindings — worker-to-worker messaging
+pyzmq>=25.0.0               # ZeroMQ bindings — worker-to-worker messaging
 
 # ── Tokenisation ──────────────────────────────────────────────────────────────
-tokenizers>=0.14.0      # fast Rust tokeniser (pulled in by transformers)
+tokenizers>=0.14.0          # fast Rust tokeniser (pulled in by transformers)
+
+# ── CLI (Phase 5) ─────────────────────────────────────────────────────────────
+click>=8.1.0                # unified lankamind CLI
+
+# ── REST API (Phase 5) ────────────────────────────────────────────────────────
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+httpx>=0.24.0               # async HTTP client + TestClient for API tests
+pydantic>=2.0.0
+
+# ── Metrics (optional) ────────────────────────────────────────────────────────
+# prometheus-client>=0.17.0   # uncomment to enable /metrics endpoint
+
+# ── Quantisation (optional, GPU workers only) ────────────────────────────────
+# bitsandbytes>=0.41.0
 
 # ── Development / testing ─────────────────────────────────────────────────────
 pytest>=7.4.0
 pytest-timeout>=2.1.0
-
-# ── Phase 2+  (uncomment when you reach that phase) ──────────────────────────
-# bitsandbytes>=0.41.0   # 8-bit quantisation for GPU workers
-# hivemind>=1.1.0        # DHT-based P2P networking (replaces ZMQ in Phase 3)

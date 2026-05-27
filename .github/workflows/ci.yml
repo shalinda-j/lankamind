@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master", "develop"]
+  pull_request:
+    branches: ["main", "master"]
+
+jobs:
+  lint-and-test:
+    name: Lint & Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # CPU-only torch for CI (much faster to download)
+          pip install torch==2.2.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev]"
+          pip install fastapi uvicorn httpx pydantic click
+
+      - name: Lint with ruff (non-blocking)
+        run: |
+          pip install ruff
+          ruff check . --select=E,W,F --ignore=E501 || true
+
+      - name: Run unit tests
+        env:
+          SKIP_INTEGRATION: "1"
+          # Use a tiny temp dir so HuggingFace cache is writable
+          HF_HOME: /tmp/hf_cache
+        run: |
+          python -m pytest tests/unit/ -v --tb=short --timeout=120
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.python-version }}
+          path: .pytest_cache/
+
+  docker-build:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build . --tag lankamind:ci --target runtime
+
+      - name: Smoke test Docker image
+        run: docker run --rm lankamind:ci --help
