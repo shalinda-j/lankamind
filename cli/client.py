@@ -8,6 +8,12 @@ Usage
     python cli/client.py "Sri Lanka is a beautiful island"
     python cli/client.py "Once upon a time" --max-tokens 80 --workers 3
 
+    # With gateway (Phase 2):
+    python cli/client.py "Once upon a time" --gateway tcp://localhost:5701
+
+    # With encryption (Phase 3):
+    python cli/client.py "Once upon a time" --encrypt --server-key <Z85-pubkey>
+
 What it does
 ------------
   1. Tokenises the prompt using GPT-2's tokeniser.
@@ -81,6 +87,8 @@ def run_client(
     base_port: int = 5500,
     result_port: int = 5599,
     gateway_address: str | None = None,
+    encrypt: bool = False,
+    server_key: str | None = None,
 ) -> str:
     """
     Send *prompt* through the pipeline and return the generated continuation.
@@ -94,6 +102,8 @@ def run_client(
     base_port        : Port that Worker 0 listens on (used without gateway).
     result_port      : Port this client will bind to receive results.
     gateway_address  : If set, discover the chain from the gateway (Phase 2).
+    encrypt          : If True, use ZMQ CURVE encryption (Phase 3).
+    server_key       : Server's Z85 public key (required when encrypt=True).
 
     Returns
     -------
@@ -106,6 +116,9 @@ def run_client(
         chain = _discover_chain(gateway_address, model, workers)
         if chain:
             first_worker_port = chain[0]["port"]
+            # Also pick up server public key from chain if not provided
+            if encrypt and not server_key and chain[0].get("public_key"):
+                server_key = chain[0]["public_key"]
             print(
                 f"[Gateway] Chain: "
                 + " → ".join(f"{w['host']}:{w['port']}" for w in chain),
@@ -115,13 +128,30 @@ def run_client(
     # ── Set up ZMQ ────────────────────────────────────────────────────────────
     ctx = zmq.Context()
 
-    # PUSH → Worker 0 (worker binds, we connect)
-    send_sock: zmq.Socket = ctx.socket(zmq.PUSH)
-    send_sock.connect(f"tcp://localhost:{first_worker_port}")
+    # Phase 3: encrypted sockets
+    if encrypt and server_key:
+        from transport.secure_transport import curve_available, make_secure_push, make_secure_pull
+        if curve_available():
+            print("[Encrypt] CURVE encryption enabled.", file=sys.stderr)
+            send_sock = make_secure_push(ctx, f"tcp://localhost:{first_worker_port}", server_key)
+            recv_sock = ctx.socket(zmq.PULL)  # result socket stays plain (client-bound server)
+            recv_sock.bind(f"tcp://*:{result_port}")
+        else:
+            print("[Encrypt] CURVE not available — using plaintext.", file=sys.stderr)
+            encrypt = False
+            send_sock = ctx.socket(zmq.PUSH)
+            send_sock.connect(f"tcp://localhost:{first_worker_port}")
+            recv_sock = ctx.socket(zmq.PULL)
+            recv_sock.bind(f"tcp://*:{result_port}")
+    else:
+        # PUSH → Worker 0 (worker binds, we connect)
+        send_sock = ctx.socket(zmq.PUSH)
+        send_sock.connect(f"tcp://localhost:{first_worker_port}")
 
-    # PULL ← last worker (we bind, worker connects)
-    recv_sock: zmq.Socket = ctx.socket(zmq.PULL)
-    recv_sock.bind(f"tcp://*:{result_port}")
+        # PULL ← last worker (we bind, worker connects)
+        recv_sock = ctx.socket(zmq.PULL)
+        recv_sock.bind(f"tcp://*:{result_port}")
+
     recv_sock.RCVTIMEO = 60_000  # milliseconds — raise an error if no reply in 60 s
 
     # ── Tokenise ──────────────────────────────────────────────────────────────
@@ -213,6 +243,18 @@ def main() -> None:
         default=None,
         help="Gateway client address for chain discovery (e.g. tcp://localhost:5701)",
     )
+    parser.add_argument(
+        "--encrypt",
+        action="store_true",
+        default=False,
+        help="Enable ZMQ CURVE end-to-end encryption (Phase 3)",
+    )
+    parser.add_argument(
+        "--server-key",
+        type=str,
+        default=None,
+        help="Worker 0's Z85 public key (required with --encrypt unless --gateway provides it)",
+    )
 
     args = parser.parse_args()
 
@@ -224,6 +266,8 @@ def main() -> None:
         base_port=args.base_port,
         result_port=args.result_port,
         gateway_address=args.gateway,
+        encrypt=args.encrypt,
+        server_key=args.server_key,
     )
 
 
