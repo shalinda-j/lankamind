@@ -5,6 +5,7 @@ accelerate>=0.24.0          # lets transformers pick CPU/GPU device cleanly
 
 # ── Networking / IPC ──────────────────────────────────────────────────────────
 pyzmq>=25.0.0               # ZeroMQ bindings — worker-to-worker messaging
+zeroconf>=0.38.0            # mDNS LAN auto-discovery (lankamind.local)
 
 # ── Tokenisation ──────────────────────────────────────────────────────────────
 tokenizers>=0.14.0          # fast Rust tokeniser (pulled in by transformers)

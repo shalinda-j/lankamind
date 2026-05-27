@@ -110,6 +110,41 @@ def chat(model, workers, max_tokens, gateway, base_port, result_port) -> None:
         click.echo()
 
 
+# ── serve (all-in-one) ───────────────────────────────────────────────────────
+
+@cli.command("serve")
+@click.option("--shards",  default=3,     show_default=True, help="Number of worker shards")
+@click.option("--model",   default="gpt2", show_default=True, help="Model name")
+@click.option("--port",    default=8000,  show_default=True, help="API + web UI port")
+@click.option("--no-mdns", is_flag=True,  default=False,     help="Disable mDNS auto-discovery")
+def serve(shards, model, port, no_mdns) -> None:
+    """Start everything: gateway + workers + API + mobile web UI.
+
+    \b
+    After startup, open on any device on your Wi-Fi:
+      http://<this-PC-IP>:8000   — direct LAN URL
+      http://lankamind.local:8000 — mDNS name (auto-resolved on most OSes)
+
+    \b
+    Android / Termux workers:
+      pkg install python && pip install lankamind
+      lankamind node --gateway tcp://<PC-IP>:5700 --host <PHONE-IP>
+    """
+    import subprocess, os
+    root = pathlib.Path(__file__).resolve().parent.parent
+    cmd = [
+        sys.executable, str(root / "scripts" / "launch_all.py"),
+        "--shards", str(shards),
+        "--model",  model,
+        "--port",   str(port),
+    ]
+    if no_mdns:
+        cmd.append("--no-mdns")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
+    subprocess.run(cmd, cwd=root, env=env)
+
+
 # ── node ──────────────────────────────────────────────────────────────────────
 
 @cli.command("node")

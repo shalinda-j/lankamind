@@ -25,6 +25,7 @@ dependencies = [
     "transformers>=4.35.0",
     "accelerate>=0.24.0",
     "pyzmq>=25.0.0",
+    "zeroconf>=0.38.0",
     "tokenizers>=0.14.0",
     "click>=8.1.0",
     "fastapi>=0.100.0",

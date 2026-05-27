@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="theme-color" content="#0f1117">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>LankaMind</title>
+  <link rel="manifest" href="/manifest.json">
+  <style>
+    /* ── Reset & Base ──────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:        #0f1117;
+      --surface:   #1a1d27;
+      --surface2:  #252836;
+      --border:    #2e3245;
+      --gold:      #e8aa3c;
+      --gold-dim:  #a87825;
+      --maroon:    #8b1a1a;
+      --text:      #e8eaf0;
+      --text-dim:  #7a7e94;
+      --green:     #2ecc71;
+      --red:       #e74c3c;
+      --radius:    14px;
+      --shadow:    0 4px 24px rgba(0,0,0,0.4);
+    }
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 16px;
+      line-height: 1.5;
+      overflow-x: hidden;
+    }
+
+    /* ── Layout ────────────────────────────────────────────────────── */
+    .app {
+      display: flex;
+      flex-direction: column;
+      min-height: 100dvh;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 0 16px 32px;
+    }
+
+    /* ── Header ────────────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 20px 0 16px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 24px;
+    }
+    .logo {
+      font-size: 28px;
+      line-height: 1;
+    }
+    .brand h1 {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      background: linear-gradient(90deg, var(--gold), #f7cc72);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .brand p {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-top: 2px;
+    }
+    .status-dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      margin-left: auto;
+      transition: background 0.3s;
+      flex-shrink: 0;
+    }
+    .status-dot.online  { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .status-dot.offline { background: var(--red); }
+    .status-label {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-left: 6px;
+    }
+
+    /* ── Node status bar ──────────────────────────────────────────── */
+    #node-bar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+      min-height: 36px;
+    }
+    .node-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+    .node-chip.healthy { border-color: var(--green); color: var(--text); }
+    .node-chip .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--text-dim);
+    }
+    .node-chip.healthy .dot { background: var(--green); }
+
+    /* ── Prompt card ───────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      box-shadow: var(--shadow);
+    }
+    .card + .card { margin-top: 16px; }
+
+    label.field-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+    }
+
+    textarea#prompt {
+      width: 100%;
+      min-height: 120px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 16px;
+      padding: 12px 14px;
+      resize: vertical;
+      outline: none;
+      transition: border-color 0.2s;
+      font-family: inherit;
+      line-height: 1.5;
+    }
+    textarea#prompt:focus { border-color: var(--gold); }
+    textarea#prompt::placeholder { color: var(--text-dim); }
+
+    /* ── Settings row ─────────────────────────────────────────────── */
+    .settings-row {
+      display: flex;
+      gap: 12px;
+      margin-top: 14px;
+      flex-wrap: wrap;
+    }
+    .setting-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+      min-width: 120px;
+    }
+    .setting-group label {
+      font-size: 11px;
+      color: var(--text-dim);
+      font-weight: 500;
+    }
+    .setting-group select,
+    .setting-group input[type="number"] {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 14px;
+      padding: 8px 10px;
+      outline: none;
+      width: 100%;
+    }
+    .setting-group select:focus,
+    .setting-group input:focus { border-color: var(--gold); }
+
+    /* ── Generate button ──────────────────────────────────────────── */
+    #btn-generate {
+      width: 100%;
+      margin-top: 16px;
+      padding: 14px;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(135deg, var(--gold), #f7a428);
+      color: #1a0d00;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+      letter-spacing: 0.3px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #btn-generate:active { transform: scale(0.98); }
+    #btn-generate:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    #btn-generate.loading {
+      background: linear-gradient(135deg, var(--gold-dim), #8b6018);
+    }
+
+    /* ── Output card ──────────────────────────────────────────────── */
+    #output-card { display: none; }
+    #output-card.visible { display: block; }
+
+    #output-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    #elapsed-time {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    #btn-copy {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-dim);
+      font-size: 12px;
+      padding: 4px 10px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    #btn-copy:hover { border-color: var(--gold); color: var(--gold); }
+
+    #prompt-echo {
+      font-size: 15px;
+      color: var(--text-dim);
+      font-style: italic;
+      border-left: 3px solid var(--gold);
+      padding-left: 12px;
+      margin-bottom: 14px;
+      line-height: 1.6;
+    }
+    #output-text {
+      font-size: 15px;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      word-break: break-word;
+      min-height: 60px;
+    }
+    .cursor-blink {
+      display: inline-block;
+      width: 2px;
+      height: 1.1em;
+      background: var(--gold);
+      vertical-align: middle;
+      margin-left: 2px;
+      animation: blink 0.8s step-end infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* ── Thinking animation ──────────────────────────────────────── */
+    .thinking {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-dim);
+      font-size: 14px;
+      padding: 8px 0;
+    }
+    .thinking span {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--gold);
+      animation: bounce 1.2s infinite;
+    }
+    .thinking span:nth-child(2) { animation-delay: 0.2s; }
+    .thinking span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce {
+      0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+      40%            { transform: scale(1);   opacity: 1; }
+    }
+
+    /* ── Error state ─────────────────────────────────────────────── */
+    .error-msg {
+      background: rgba(231,76,60,0.12);
+      border: 1px solid var(--red);
+      border-radius: 10px;
+      padding: 12px 14px;
+      color: #ff8573;
+      font-size: 14px;
+      margin-top: 12px;
+      display: none;
+    }
+    .error-msg.visible { display: block; }
+
+    /* ── History ─────────────────────────────────────────────────── */
+    #history-section { margin-top: 24px; }
+    #history-section h3 {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+    }
+    .history-item {
+      padding: 12px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 10px;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .history-item:hover { border-color: var(--gold-dim); }
+    .history-item .hi-prompt {
+      font-size: 13px;
+      color: var(--text-dim);
+      font-style: italic;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 4px;
+    }
+    .history-item .hi-result {
+      font-size: 13px;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* ── Footer ──────────────────────────────────────────────────── */
+    footer {
+      margin-top: auto;
+      padding-top: 24px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-dim);
+      border-top: 1px solid var(--border);
+    }
+    footer a { color: var(--gold-dim); text-decoration: none; }
+    footer a:hover { color: var(--gold); }
+
+    /* ── Responsive ───────────────────────────────────────────────── */
+    @media (max-width: 480px) {
+      .settings-row { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">🌴</div>
+    <div class="brand">
+      <h1>LankaMind</h1>
+      <p>Distributed AI · Sri Lanka Network</p>
+    </div>
+    <div class="status-dot" id="status-dot"></div>
+    <span class="status-label" id="status-label">checking…</span>
+  </header>
+
+  <!-- Node status chips -->
+  <div id="node-bar"></div>
+
+  <!-- Prompt input card -->
+  <div class="card">
+    <label class="field-label" for="prompt">Your Prompt</label>
+    <textarea id="prompt" rows="5"
+      placeholder="The history of Sri Lanka spans…"></textarea>
+
+    <div class="settings-row">
+      <div class="setting-group">
+        <label for="max-tokens">Max tokens</label>
+        <input type="number" id="max-tokens" value="60" min="1" max="500">
+      </div>
+      <div class="setting-group">
+        <label for="model-select">Model</label>
+        <select id="model-select">
+          <option value="gpt2">GPT-2</option>
+          <option value="gpt2-medium">GPT-2 Medium</option>
+          <option value="gpt2-large">GPT-2 Large</option>
+        </select>
+      </div>
+      <div class="setting-group">
+        <label for="workers-input">Workers</label>
+        <input type="number" id="workers-input" value="3" min="1" max="10">
+      </div>
+    </div>
+
+    <button id="btn-generate">⚡ Generate</button>
+    <div class="error-msg" id="error-msg"></div>
+  </div>
+
+  <!-- Output card -->
+  <div class="card" id="output-card">
+    <div id="output-header">
+      <label class="field-label" style="margin:0">Output</label>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span id="elapsed-time"></span>
+        <button id="btn-copy">Copy</button>
+      </div>
+    </div>
+    <div id="prompt-echo"></div>
+    <div id="output-text"></div>
+  </div>
+
+  <!-- History -->
+  <div id="history-section" style="display:none">
+    <h3>Recent</h3>
+    <div id="history-list"></div>
+  </div>
+
+  <!-- Footer -->
+  <footer>
+    <p>
+      <a href="/docs" target="_blank">API Docs</a> ·
+      <a href="https://github.com/shalinda-j/lankamind" target="_blank">GitHub</a> ·
+      Open Source · MIT License
+    </p>
+    <p style="margin-top:6px">Connected to: <code id="server-url"></code></p>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const BASE = window.location.origin;
+  const $     = id => document.getElementById(id);
+  const history_items = JSON.parse(localStorage.getItem("lm_history") || "[]");
+
+  $("server-url").textContent = BASE;
+
+  /* ── Health + node poll ─────────────────────────────────────────── */
+  async function checkHealth() {
+    try {
+      const r = await fetch(BASE + "/health", { signal: AbortSignal.timeout(3000) });
+      if (r.ok) {
+        $("status-dot").className = "status-dot online";
+        $("status-label").textContent = "online";
+      } else { throw new Error(); }
+    } catch {
+      $("status-dot").className = "status-dot offline";
+      $("status-label").textContent = "offline";
+    }
+  }
+
+  async function loadNodes() {
+    try {
+      const r = await fetch(BASE + "/v1/nodes", { signal: AbortSignal.timeout(3000) });
+      if (!r.ok) return;
+      const nodes = await r.json();
+      const bar = $("node-bar");
+      bar.innerHTML = "";
+      if (nodes.length === 0) {
+        bar.innerHTML = `<div class="node-chip">No workers connected yet</div>`;
+        return;
+      }
+      nodes.forEach(n => {
+        const chip = document.createElement("div");
+        chip.className = "node-chip" + (n.is_healthy ? " healthy" : "");
+        chip.innerHTML = `<div class="dot"></div>
+          <span>Shard ${n.shard_idx} · ${n.host}:${n.port}</span>
+          <span style="color:var(--text-dim)">${n.latency_ms.toFixed(0)} ms</span>`;
+        bar.appendChild(chip);
+      });
+    } catch { /* ignore */ }
+  }
+
+  checkHealth();
+  loadNodes();
+  setInterval(checkHealth, 15000);
+  setInterval(loadNodes, 30000);
+
+  /* ── History ────────────────────────────────────────────────────── */
+  function saveHistory(prompt, result) {
+    history_items.unshift({ prompt, result, ts: Date.now() });
+    if (history_items.length > 10) history_items.length = 10;
+    localStorage.setItem("lm_history", JSON.stringify(history_items));
+    renderHistory();
+  }
+
+  function renderHistory() {
+    const section = $("history-section");
+    const list    = $("history-list");
+    if (history_items.length === 0) { section.style.display = "none"; return; }
+    section.style.display = "block";
+    list.innerHTML = "";
+    history_items.forEach(item => {
+      const div = document.createElement("div");
+      div.className = "history-item";
+      div.innerHTML = `<div class="hi-prompt">${escHtml(item.prompt)}</div>
+                       <div class="hi-result">${escHtml(item.result)}</div>`;
+      div.addEventListener("click", () => {
+        $("prompt").value = item.prompt;
+        $("prompt").scrollIntoView({ behavior: "smooth" });
+      });
+      list.appendChild(div);
+    });
+  }
+  renderHistory();
+
+  /* ── Generate ──────────────────────────────────────────────────── */
+  let abortCtrl = null;
+
+  $("btn-generate").addEventListener("click", async () => {
+    const prompt     = $("prompt").value.trim();
+    const maxTokens  = parseInt($("max-tokens").value, 10) || 60;
+    const model      = $("model-select").value;
+    const workers    = parseInt($("workers-input").value, 10) || 3;
+
+    if (!prompt) {
+      showError("Please enter a prompt first.");
+      return;
+    }
+
+    // Reset UI
+    clearError();
+    showOutput(true);
+    $("prompt-echo").textContent = prompt;
+    $("output-text").innerHTML   = `<div class="thinking"><span></span><span></span><span></span><span> Thinking…</span></div>`;
+    $("btn-generate").disabled   = true;
+    $("btn-generate").className  = "loading";
+    $("btn-generate").textContent = "⏳ Generating…";
+    $("elapsed-time").textContent = "";
+
+    const t0 = performance.now();
+
+    try {
+      if (abortCtrl) abortCtrl.abort();
+      abortCtrl = new AbortController();
+
+      const resp = await fetch(BASE + "/v1/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, max_tokens: maxTokens, model, workers }),
+        signal: abortCtrl.signal,
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+        throw new Error(err.detail || "Request failed");
+      }
+
+      const data = await resp.json();
+      const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+
+      // Typewriter reveal
+      $("output-text").innerHTML = "";
+      await typeWriter($("output-text"), data.generated_text, 18);
+
+      $("elapsed-time").textContent = `${elapsed}s · ${data.tokens_generated} tokens`;
+      saveHistory(prompt, data.generated_text);
+
+    } catch (e) {
+      if (e.name === "AbortError") return;
+      showError("Error: " + e.message + ". Make sure workers are running.");
+      $("output-text").innerHTML = "";
+    } finally {
+      $("btn-generate").disabled  = false;
+      $("btn-generate").className = "";
+      $("btn-generate").textContent = "⚡ Generate";
+    }
+  });
+
+  /* ── Typewriter effect ─────────────────────────────────────────── */
+  async function typeWriter(el, text, delayMs) {
+    const cursor = document.createElement("span");
+    cursor.className = "cursor-blink";
+    el.appendChild(cursor);
+
+    for (let i = 0; i < text.length; i++) {
+      el.insertBefore(document.createTextNode(text[i]), cursor);
+      if (i % 3 === 0) await sleep(delayMs); // batch chars for speed
+    }
+    cursor.remove();
+  }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  /* ── Copy button ───────────────────────────────────────────────── */
+  $("btn-copy").addEventListener("click", () => {
+    const text = $("output-text").textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      $("btn-copy").textContent = "Copied!";
+      setTimeout(() => { $("btn-copy").textContent = "Copy"; }, 1500);
+    });
+  });
+
+  /* ── Keyboard shortcut: Ctrl/Cmd + Enter ───────────────────────── */
+  $("prompt").addEventListener("keydown", e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      $("btn-generate").click();
+    }
+  });
+
+  /* ── Helpers ────────────────────────────────────────────────────── */
+  function showOutput(visible) {
+    $("output-card").className = "card" + (visible ? " visible" : "");
+  }
+  function showError(msg) {
+    $("error-msg").textContent = msg;
+    $("error-msg").className = "error-msg visible";
+  }
+  function clearError() {
+    $("error-msg").className = "error-msg";
+  }
+  function escHtml(str) {
+    return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+})();
+</script>
+</body>
+</html>
